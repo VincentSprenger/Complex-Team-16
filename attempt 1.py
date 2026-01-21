@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 #Physical Parameters from Helbing et al. 2000)
 
 mass = 80.0                # kg
-tau = 0.005                  # relaxation time (s)
+tau = 0.0005                  # relaxation time (s)
 a = 2000.0                # social force strength (N)
 b = 0.08                   # social force range (m)
 
@@ -24,6 +24,8 @@ v_desired = 50            # m/s (baseline, non-panic)
 
 # Geometry
 pedestrian_radius_range = (0.25, 0.35)  # meters
+
+
 
 # Time stepping
 dt = 0.001
@@ -69,9 +71,12 @@ class Pedestrian:
 
     # Social repulsion (always active)
         force = a * np.exp(overlap / b) * n_ij
+        
+        max_overlap = 0.25 * self.radius
 
         if overlap > 0:
             # Body force
+            overlap = min(overlap, max_overlap)
             force += k_body * overlap * n_ij
 
             # Sliding friction
@@ -198,6 +203,6 @@ class Simulator:
         self.animate()
 
 if __name__ == "__main__":
-    sim = Simulator(num_pedestrians=30)
+    sim = Simulator(num_pedestrians=100)
     sim.run()
 

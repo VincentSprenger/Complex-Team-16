@@ -25,11 +25,12 @@ K = 120000.0          # Body Force (Compression)
 noise_strength = 0.0 
 
 class CrowdSimulation:
-    def __init__(self, room_size=room_size, timestep=0.04, n_individuals=n_individuals):
+    def __init__(self, room_size=room_size, timestep=0.04, n_individuals=n_individuals, exit_width=exit_width):
         # Spawn agents
         self.room_size = room_size
         self.dt = timestep
         self.n_individuals = n_individuals
+        self.exit_width = exit_width
         self.pos = np.random.rand(n_individuals, 2)
         self.pos[:, 0] = self.pos[:, 0] * (self.room_size[0] - 3) + 0.5 
         self.pos[:, 1] = self.pos[:, 1] * (self.room_size[1] - 1) + 0.5 
@@ -45,9 +46,9 @@ class CrowdSimulation:
         # print("Initialized positions:", self.pos)
     
     def get_forces(self):
-        total_force = np.zeros((n_individuals, 2))
-        pressure_force = np.zeros(n_individuals)
-        
+        total_force = np.zeros((self.n_individuals, 2))
+        pressure_force = np.zeros(self.n_individuals)
+
         # 1. Goal Direction
         target = np.array([self.room_size[0], self.room_size[1]/2])
         direction = target - self.pos
@@ -61,7 +62,7 @@ class CrowdSimulation:
         total_force += f_desired
 
         # 2. Individual-Individual Repulsion
-        for i in range(n_individuals):
+        for i in range(self.n_individuals):
             d_vec = self.pos[i] - self.pos[i+1:] 
             dist = np.linalg.norm(d_vec, axis=1)
             safe_dist = np.where(dist < 1e-6, 1e-6, dist) 
@@ -82,7 +83,7 @@ class CrowdSimulation:
                 f_body[mask_touch] = (K * overlap[mask_touch])[:, None] * n_vec[mask_touch]
                 body_mag = K * overlap[mask_touch]
                 pressure_force[i] += np.sum(body_mag)
-                j_indices = np.arange(i + 1, n_individuals)[mask_touch]
+                j_indices = np.arange(i + 1, self.n_individuals)[mask_touch]
                 np.add.at(pressure_force, j_indices, body_mag)
 
             force = f_social + f_body
@@ -118,7 +119,7 @@ class CrowdSimulation:
         
         #handle wall collisions (except door)
         crossing_wall = (new_pos[:, 0] > (self.room_size[0] - self.radius)) & (self.pos[:, 0] < self.room_size[0])
-        in_door = np.abs(new_pos[:, 1] - self.room_size[1]/2) < (exit_width/2 - self.radius/2)
+        in_door = np.abs(new_pos[:, 1] - self.room_size[1]/2) < (self.exit_width/2 - self.radius/2)
         
         blocked_indices = crossing_wall & (~in_door)
         
@@ -144,17 +145,17 @@ class CrowdSimulation:
         ax1.set_xlim(0, self.room_size[0] + 4)
         ax1.set_ylim(0, self.room_size[1])
         ax1.set_aspect('equal')
-        ax1.set_title(f"Crowd Evacuation (N={n_individuals})")
+        ax1.set_title(f"Crowd Evacuation (N={self.n_individuals})")
 
         # WALLS
         ax1.plot([self.room_size[0], self.room_size[0]], 
-                [(self.room_size[1] - exit_width) / 2, (self.room_size[1] + exit_width) / 2], 
+                [(self.room_size[1] - self.exit_width) / 2, (self.room_size[1] + self.exit_width) / 2], 
                 color='green', linewidth=5)
         ax1.plot([0, self.room_size[0]], [0, 0], color='black')
         ax1.plot([0, self.room_size[0]], [self.room_size[1], self.room_size[1]], color='black')
         ax1.plot([0, 0], [0, self.room_size[1]], color='black')
-        ax1.plot([self.room_size[0], self.room_size[0]], [0, (self.room_size[1] - exit_width) / 2], color='black')
-        ax1.plot([self.room_size[0], self.room_size[0]], [(self.room_size[1] + exit_width) / 2, self.room_size[1]], color='black')  
+        ax1.plot([self.room_size[0], self.room_size[0]], [0, (self.room_size[1] - self.exit_width) / 2], color='black')
+        ax1.plot([self.room_size[0], self.room_size[0]], [(self.room_size[1] + self.exit_width) / 2, self.room_size[1]], color='black')  
 
 
         # PEOPLE
@@ -209,7 +210,15 @@ class CrowdSimulation:
                 return self.time
                 #print("All individuals have exited the room.", self.time)
                 #break
-        return np.nan
+        return total_steps * self.dt # set a max value instead of runtime error
+    
+    def run_Bool(self, total_steps=1000):
+        for _ in range(total_steps):
+            self.update(self.dt)
+            self.time += self.dt
+            if min(self.pos[:, 0]) > self.room_size[0]:
+                return True
+        return False
 
 
 def compute_flow(exit_times, dt):
@@ -227,7 +236,7 @@ def compute_flow(exit_times, dt):
     flow, _ = np.histogram(exit_times, bins=bins)
     return flow
     
-#sim=CrowdSimulation((48, 3), timestep=0.04, n_individuals=150)
+#sim=CrowdSimulation((12, 12), timestep=0.04, n_individuals=150, exit_width=2)
 #sim.animate()
 #sim.animate_run()
 
@@ -335,5 +344,62 @@ def NoiseFlowVarianceExperiment(noise_values, runs=10):
 
     return flow_variances
 
-noise_vals = [0.0, 0.05, 0.1, 0.2, 0.4, 0.6]
+def door_experiment(door_widths, runs=10):
+    mean_times = []
+    std_times = []
+
+    for width in door_widths:
+        times = []
+
+        for _ in tqdm(range(runs)):
+            sim = CrowdSimulation(
+                room_size=(12.0, 12.0),
+                timestep=0.04,
+                n_individuals=50,
+                exit_width=width
+            )
+            t_exit = sim.run(total_steps=10000)
+            times.append(t_exit)
+
+        mean_times.append(np.nanmean(times))
+        std_times.append(np.nanstd(times))
+
+    plt.errorbar(door_widths, mean_times, yerr=std_times, marker='o')
+    plt.xlabel("Door width (m)")
+    plt.ylabel("Evacuation time (s)")
+    plt.title("Evacuation time vs door width")
+    plt.show()
+
+def door_experiment_bool(door_widths, runs=10):
+    success_rates = []
+
+    for width in door_widths:
+        successes = 0
+
+        for _ in tqdm(range(runs)):
+            sim = CrowdSimulation(
+                room_size=(12.0, 12.0),
+                timestep=0.04,
+                n_individuals=50,
+                exit_width=width
+            )
+            exited = sim.run_Bool(total_steps=2500)
+            if exited:
+                successes += 1
+
+        success_rate = successes / runs
+        success_rates.append(success_rate)
+
+    plt.plot(door_widths, success_rates, marker='o')
+    plt.xlabel("Door width (m)")
+    plt.ylabel("Success rate")
+    plt.title("Evacuation success rate vs door width")
+    plt.ylim(0, 1.05)
+    plt.show()
+
+
+
+door_experiment_bool([0.7, 0.8, 0.9, 1.0, 1.1, 1.2], runs=50)
+
+#noise_vals = [0.0, 0.05, 0.1, 0.2, 0.4, 0.6]
 #NoiseFlowVarianceExperiment(noise_vals, runs=5)

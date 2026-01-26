@@ -27,6 +27,8 @@ A = 2000.0            # Social Force Strength (Newton) --> in the paper was 2000
 B = 0.08              # Social Force Falloff (meters)
 K1 = 120000.0          # Body Compression Force (Newton/m)
 K2 = 240000.0          # Friction Force (Newton/m)
+noise_constant = 4.0   # Scaling factor for noise effect
+
 
 # TIMESTEP / TIMEOUT / ANTI-JAMMING PARAMETERS
 DT=0.02              # Time Step (seconds)
@@ -63,6 +65,8 @@ class CrowdSimulation:
         self.time = 0.0
         self.exit_times = [] 
         self.exited_mask = np.zeros(self.n_individuals, dtype=bool)
+        self.noise = np.zeros((self.n_individuals, 1))
+        self.total_noise = np.zeros((self.n_individuals, 1))
 
     def get_forces(self):
         """
@@ -192,12 +196,14 @@ class CrowdSimulation:
         """
         forces = self.get_forces()
         acc = forces / MASS
-        self.vel += acc * dt
+        self.vel += acc * dt * (1 - self.noise_strength) + self.noise_strength * noise_constant * self.noise
+        #print(self.vel)
         
         # --- NOISE (Random Walk) ---
-        if self.noise_strength > 0:
-            noise = self.noise_strength * np.sqrt(dt) * np.random.randn(self.n_individuals, 2)
-            self.vel += noise
+        #if self.noise_strength > 0:
+           #noise = self.noise_strength * np.sqrt(dt) * np.random.randn(self.n_individuals, 2)
+
+            #self.vel = self.vel * (1 - self.noise_strength) + self.noise * self.noise_strength * noise_constant
 
         # --- SPEED LIMITING ---
         speed = np.linalg.norm(self.vel, axis=1)
@@ -299,6 +305,8 @@ class CrowdSimulation:
             # Update physics twice per frame for stability
             for _ in range(SUBSTEPS): 
                 self.update(self.dt/SUBSTEPS)
+                self.time += self.dt/SUBSTEPS
+                print(self.time)
             
             # Update visuals
             self.collection.set_offsets(self.pos)
@@ -312,6 +320,15 @@ class CrowdSimulation:
         
         anim = FuncAnimation(self.fig, animate_frame, frames=400, interval=30, blit=False)
         plt.show()
+
+    def wiener_process_step(self):
+        """
+        Generates Wiener process increments for noise.
+        """
+    
+        dW = np.sqrt(self.dt) * np.random.randn(self.n_individuals, 1)
+        self.noise += dW
+        self.total_noise = np.hstack((self.total_noise, self.noise))
 
     def run(self):
         """
@@ -490,13 +507,13 @@ if __name__ == "__main__":
             sim = CrowdSimulation(desired_velocity=10.5)
             sim.animate()
         elif choice == "2":
-            sim = CrowdSimulation(desired_velocity=5.0, noise_strength=0.5)
+            sim = CrowdSimulation(desired_velocity=5, noise_strength=0)
             sim.animate()
         elif choice == "3":
             EscapeTimeVSVelocity()
         elif choice == "4":
             # Test noise from 0 (jamming) to high (chaos)
-            noise_vals = [0.0, 0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.2]
+            noise_vals = [0.1, 0.3, 0.5, 0.7, 0.9]
             NoiseEffectExperiment(noise_vals, vel=9.0, runs=5)
         elif choice == "5":
             # Test various room shapes

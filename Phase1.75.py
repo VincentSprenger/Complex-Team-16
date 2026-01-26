@@ -486,6 +486,73 @@ def NoiseEffectExperiment(noise_values, vel, runs=5):
 # ==========================================
 # def AspectRatio(ratio_list, runs=5):
 
+
+# ==========================================
+# --- 6. FRICTION FORCE (Complexity Study) ---
+# No friction: People slide past each other freely, smooth fluid-like flow
+# Medium friction: Partial locking and intermittens clogging mixed with avalanches of exits
+# High friction: Stable force chains and locks causing clogging
+# ==========================================
+
+K2_values = [0,50000,100000,150000,200000,250000,300000,600000,900000,1200000]
+
+def FrictionExperiment(K2_values, runs):
+    global K2 
+
+    print("\n--- STARTING COMPLEXITY STUDY: FRICTION EFFECT ---")
+    print("Hypothesis: Increasing friction stabilizes force chains and increases clogging.")
+
+    avg_times = []
+    std_times = []
+    success_rates = []
+
+    for k2 in tqdm(K2_values):
+        K2 = k2
+        run_times = []
+        successes = 0
+
+        for _ in range(runs):
+            sim = CrowdSimulation(
+                desired_velocity=9.0,
+                noise_strength=0.0,
+                n_individuals=N_INDIVIDUALS
+            )
+
+            val = sim.run()
+
+            if val is not None:
+                run_times.append(val)
+                successes += 1
+            else:
+                print(f"[!] Jamming detected at K2={k2} ({_+1}/{runs})")
+                run_times.append(PENALTY_TIME)
+
+
+        avg_times.append(np.mean(run_times))
+        std_times.append(np.std(run_times))
+        success_rates.append(successes / runs)    
+
+
+    # --- PLOT 1: Evacuation Time ---
+    plt.figure(figsize=(10, 6))
+    plt.errorbar(K2_values, avg_times, yerr=std_times, fmt='-o', capsize=5)
+    plt.axhline(y=PENALTY_TIME, color='red', linestyle='--', label='Jamming Threshold')
+    plt.xlabel("Friction Coefficient K2 (Newton/m)")
+    plt.ylabel("Evacuation Time (s)")
+    plt.title("Effect of Tangential Friction on Evacuation Time")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.show()
+
+    # --- PLOT 2: Success Rate ---
+    plt.figure(figsize=(10, 6))
+    plt.plot(K2_values, success_rates, '-s', color='purple')
+    plt.xlabel("Friction Coefficient K2")
+    plt.ylabel("Success Rate")
+    plt.title("Probability of Successful Evacuation vs Friction")
+    plt.grid(alpha=0.3)
+    plt.show()
+
 # ==========================================
 # --- MAIN MENU ---
 # ==========================================
@@ -499,7 +566,9 @@ if __name__ == "__main__":
         print("3. Velocity Effect")
         print("4. Noise Effect")
         print("5. Aspect Ratio Effect")
+        print("6. Friction Experiment")
         print("0. Exit")
+        
         
         choice = input("\nEnter selection: ")
         
@@ -519,7 +588,11 @@ if __name__ == "__main__":
             # Test various room shapes
             # AspectRatio([0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0])
             print("Aspect Ratio study not implemented yet.")
+        elif choice == "6":
+            # Friction Effect
+            FrictionExperiment(K2_values,runs=5)
         elif choice == "0":
             break
         else:
             print("Invalid selection.")
+

@@ -38,7 +38,7 @@ PENALTY_TIME = MAX_STEPS*DT # approx 1800 seconds
 
 
 class CrowdSimulation:
-    def __init__(self, room_size=DEFAULT_ROOM_SIZE, desired_velocity=5.0, noise_strength=0.0, n_individuals=N_INDIVIDUALS):
+    def __init__(self, room_size=DEFAULT_ROOM_SIZE, desired_velocity=5.0, noise_strength=0.0, n_individuals=N_INDIVIDUALS,radius=RADIUS,std_radius=STD_RADIUS):
         """
         Initialize the simulation with specific parameters.
         """
@@ -355,13 +355,14 @@ class CrowdSimulation:
 # --- 3. VELOCITY EFFECT (Complexity Study) ---
 # ==========================================
 def EscapeTimeVSVelocity():
-    # Define velocity range (from normal walking to sprinting/panic)
-    velocities = np.arange(1.5, MAX_SPEED, (MAX_SPEED-1.5)/10.) 
+    velocities = np.arange(1.0, MAX_SPEED, (MAX_SPEED-1.0)/10.)  
     # velocities=velocities[::-1]
     avg_times = []
     std_times = []
+    jammed_times = []
+    mask_ended = []
     
-    runs = 3          # Number of runs per velocity
+    runs = 4         # Number of runs per velocity
     
     # Penalty Parameters
     # If they don't exit within this limit, we mark it as "Jammed"
@@ -371,47 +372,58 @@ def EscapeTimeVSVelocity():
     
     for v in tqdm(velocities):
         run_times = []
-        
+        jammed_runs = 0
+
         for _ in range(runs):
-            # Create simulation with specific desired velocity
             sim = CrowdSimulation(desired_velocity=v, n_individuals=N_INDIVIDUALS)
-            
-            # Run ONCE without retries. We want to detect the failure.
             val = sim.run()
             
-            if val is not None:
-                # Case A: Successful Evacuation
+            if val is not None: #Successful Evacuation
                 run_times.append(val)
-            else:
-                # Case B: JAMMING (Emergence)
-                # The system failed to clear. We assign the max penalty time.
+            else: #Jamming
                 print(f"[!] Jamming detected at V0={v:.2f} ({_+1}/{runs})")
+                jammed_runs += 1
                 # run_times.append(PENALTY_TIME)
         
-        # Calculate statistics
-        if run_times != []:
+        jammed_times.append(jammed_runs)
+        if len(run_times) > 0:
             avg_times.append(np.mean(run_times))
             std_times.append(np.std(run_times))
+            mask_ended.append(True)
         else:
-            avg_times.append(PENALTY_TIME)
-            std_times.append(0.0)
-
+            mask_ended.append(False)
+            # avg_times.append(PENALTY_TIME)
+            # std_times.append(0.0)
+    
+    mask_ended = np.array(mask_ended, dtype=bool)
+    
     # --- PLOTTING ---
-    plt.figure(figsize=(10,6))
+    bar_width = 0.03
     
-    # Main Curve
-    plt.errorbar(velocities, avg_times, yerr=std_times, fmt='-o', color='blue', capsize=5, label='Evacuation Time')
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
     
-    # Jamming Threshold Line
-    plt.axhline(y=PENALTY_TIME, color='red', linestyle='--', label='Jamming Threshold (Timeout)')
+    ax1.errorbar(velocities[mask_ended], avg_times, yerr=std_times, fmt='-o', color='blue', capsize=5, label='Evacuation Time')
+    ax1.set_title("Average Evacuation Time")
+    ax1.set_xlabel("Desired Velocity (m/s)")
+    ax1.set_ylabel("Evacuation Time (s)")
+    ax1.legend()
     
-    plt.title("Complexity: The 'Faster-is-Slower' Effect")
-    plt.xlabel("Desired Velocity (m/s)")    
-    plt.ylabel("Evacuation Time (s)")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    ax2.bar(velocities, jammed_times, 
+            width=bar_width, 
+            color='salmon', 
+            edgecolor='maroon',
+            alpha=0.8, 
+            label='Jammed Runs Count')
+            
+    ax2.set_title("Number of Jammed Runs vs Desired Velocity", fontsize=14)
+    ax2.set_xlabel("Desired Velocity (m/s)", fontsize=12)
+    ax2.set_ylabel("Count of Jammed Simulations", fontsize=12)
+    ax2.grid(axis='y', linestyle='-', alpha=0.7)
+    ax2.set_ylim(0, runs + 1)
+    ax2.legend()
     
-
+    plt.suptitle("Complexity: Varying Desired Velocity (Faster is Slower Effect)", fontsize=16)
+    plt.tight_layout()
     plt.show()
     
 
@@ -536,6 +548,164 @@ def FrictionExperiment(K2_values, runs):
     plt.grid(alpha=0.3)
     plt.show()
 
+
+# ==========================================
+# --- 7. RADIUS EFFECT ---  
+def EscapeTimeVSRadius():
+    radii = np.arange(0.2, 0.5, (0.5-0.2)/10.)
+    avg_times = []
+    std_times = []
+    jammed_times = []
+    
+    mask_ended = []
+    
+    runs = 4         
+    
+    print("\n--- STARTING COMPLEXITY STUDY: RADIUS EFFECT ---")
+    print("Hypothesis: Larger individual radius leads to coordination breakdown and jamming.")
+    
+    for r in tqdm(radii):
+        run_times = []
+        jammed_runs = 0
+        for _ in range(runs):
+            sim = CrowdSimulation(radius=r, n_individuals=N_INDIVIDUALS)            
+            val = sim.run()
+            
+            if val is not None:  # If they don't exit within this limit, we mark it as "Jammed"              
+                run_times.append(val) # Successful Evacuation
+            else:
+                print(f"[!] Jamming detected at Radius={r:.2f} ({_+1}/{runs})")
+                jammed_runs += 1
+                # run_times.append(PENALTY_TIME)
+                
+        jammed_times.append(jammed_runs)
+        if len(run_times) > 0:
+            avg_times.append(np.mean(run_times))
+            std_times.append(np.std(run_times))
+            mask_ended.append(True)
+        else:
+            mask_ended.append(False)
+            # avg_times.append(PENALTY_TIME)
+            # std_times.append(0.0)
+    
+    mask_ended = np.array(mask_ended, dtype=bool)
+
+    # --- PLOTTING ---
+    bar_width = 0.03
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    ax1.errorbar(radii[mask_ended], avg_times, yerr=std_times, fmt='-o', color='blue', capsize=5, label='Evacuation Time')
+    ax1.set_title("Average Evacuation Time")
+    ax1.set_xlabel("Individual Radius (m)")
+    ax1.set_ylabel("Evacuation Time (s)")
+    ax1.legend()
+    
+    ax2.bar(radii, jammed_times, 
+            width=bar_width, 
+            color='salmon', 
+            edgecolor='maroon',
+            alpha=0.8, 
+            label='Jammed Runs Count')
+            
+    ax2.set_title("Number of Jammed Runs vs Radius", fontsize=14)
+    ax2.set_xlabel("Individual Radius (m)", fontsize=12)
+    ax2.set_ylabel("Count of Jammed Simulations", fontsize=12)
+    ax2.grid(axis='y', linestyle='-', alpha=0.7)
+    ax2.set_ylim(0, runs + 1)
+    ax2.legend()
+    
+    plt.suptitle("Complexity: Varying Individual Size Effect", fontsize=16)
+    plt.tight_layout()
+    plt.show()  
+    
+    # plt.figure(figsize=(10,6))    
+    # plt.errorbar(radii, avg_times, yerr=std_times, fmt='-o', color='blue', capsize=5, label='Evacuation Time')
+    # plt.plot(radii, jammed_times, 'o', color='red', label='Jammed Runs', markersize=8)
+    # # plt.axhline(y=PENALTY_TIME, color='red', linestyle='--', label='Jamming Threshold (Timeout)') # Jamming Threshold Line
+    # plt.title("Complexity: Varying Individual Size Effect")
+    # plt.xlabel("Individual Radius (m)")    
+    # plt.ylabel("Evacuation Time (s)")
+    # plt.legend()
+    # plt.show()
+
+# ==========================================
+# 8. ESCAPE TIME VS RADIUS STD DEV
+def EscapeTimeVSRadiusStd():    
+    radius_stds = np.arange(0.0,RADIUS,(RADIUS)/10.) 
+    avg_times = []   
+    std_times = []    
+    jammed_times = []
+    mask_ended = []
+
+    runs = 4         # Number of runs per radius std dev
+    print("\n--- STARTING COMPLEXITY STUDY: RADIUS STD DEV EFFECT ---")
+    print("Hypothesis: Higher radius variability leads to coordination breakdown and jamming.")
+    for rs in tqdm(radius_stds):
+        run_times = []
+        jammed_runs = 0
+        for _ in range(runs):
+            sim = CrowdSimulation(std_radius=rs, n_individuals=N_INDIVIDUALS)            
+            val = sim.run()
+            
+            if val is not None:  # If they don't exit within this limit, we mark it as "Jammed"              
+                run_times.append(val) # Successful Evacuation
+            else:
+                print(f"[!] Jamming detected at Radius STD={rs:.2f} ({_+1}/{runs})")
+                jammed_runs += 1
+                     
+        jammed_times.append(jammed_runs)
+        if len(run_times) > 0:
+            avg_times.append(np.mean(run_times))
+            std_times.append(np.std(run_times))
+            mask_ended.append(True)
+        else:
+            mask_ended.append(False)
+        
+    mask_ended = np.array(mask_ended, dtype=bool)
+
+    # --- PLOTTING ---
+    bar_width = 0.03
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    ax1.errorbar(radius_stds[mask_ended], avg_times, yerr=std_times, fmt='-o', color='blue', capsize=5, label='Evacuation Time')
+    ax1.set_title("Average Evacuation Time")
+    ax1.set_xlabel("Individual Radius Standard Deviation (m)")
+    ax1.set_ylabel("Evacuation Time (s)")
+    ax1.legend()
+    
+    ax2.bar(radius_stds, jammed_times, 
+            width=bar_width, 
+            color='salmon', 
+            edgecolor='maroon',
+            alpha=0.8, 
+            label='Jammed Runs Count')
+            
+    ax2.set_title("Number of Jammed Runs vs Radius Std Dev", fontsize=14)
+    ax2.set_xlabel("Individual Radius Standard Deviation (m)", fontsize=12)
+    ax2.set_ylabel("Count of Jammed Simulations", fontsize=12)
+    ax2.grid(axis='y', linestyle='-', alpha=0.7)
+    ax2.set_ylim(0, runs + 1)
+    ax2.legend()
+    
+    plt.suptitle("Complexity: Varying Radius Standard Deviation Effect", fontsize=16)
+    plt.tight_layout()
+    plt.show() 
+    
+    
+    # plt.figure(figsize=(10,6))
+    # plt.errorbar(radius_stds, avg_times, yerr=std_times, fmt='-o', color='blue', capsize=5, label='Evacuation Time')
+    # # plt.axhline(y=PENALTY_TIME, color='red', linestyle='--', label='Jamming Threshold (Timeout)') # Jamming Threshold Line
+    # plt.plot(radius_stds, jammed_times, 'o', color='red', label='Jammed Runs', markersize=8)
+    # plt.title("Complexity: Different Size Effect")
+    # plt.xlabel("Individual Radius Standard Deviation (m)")
+    # plt.ylabel("Evacuation Time (s)")
+    # plt.legend()    
+    # plt.show()
+
+
+
 # ==========================================
 # --- MAIN MENU ---
 # ==========================================
@@ -550,6 +720,8 @@ if __name__ == "__main__":
         print("4. Noise Effect")
         print("5. Aspect Ratio Effect")
         print("6. Friction Experiment")
+        print("7. Radius Effect")
+        print("8. Radius Std Dev Effect")
         print("0. Exit")
         
         
@@ -574,6 +746,10 @@ if __name__ == "__main__":
         elif choice == "6":
             # Friction Effect
             FrictionExperiment(K2_values,runs=5)
+        elif choice == "7":
+            EscapeTimeVSRadius()
+        elif choice == "8":
+            EscapeTimeVSRadiusStd()
         elif choice == "0":
             break
         else:

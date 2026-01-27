@@ -21,6 +21,7 @@ MASS = 80.0
 # BEHAVIOR PARAMETERS
 MAX_SPEED = 12.0       
 TAU = 0.5             # Relaxation Time
+PANIC_RADIUS = DEFAULT_ROOM_SIZE[0] / 3
 
 # HELBING FORCE PARAMETERS
 A = 2000.0            # Social Force Strength (Newton) --> in the paper was 2000
@@ -40,7 +41,8 @@ PENALTY_TIME = MAX_STEPS*DT # approx 1800 seconds
 
 
 class CrowdSimulation:
-    def __init__(self, room_size=DEFAULT_ROOM_SIZE, desired_velocity=5.0, noise_strength=0.0, n_individuals=N_INDIVIDUALS,radius=RADIUS,std_radius=STD_RADIUS):
+    def __init__(self, room_size=DEFAULT_ROOM_SIZE, desired_velocity=5.0, noise_strength=0.0, n_individuals=N_INDIVIDUALS,
+                 radius=RADIUS, std_radius=STD_RADIUS, panic_parameter=0, doors=1, known_exit=True):
         """
         Initialize the simulation with specific parameters.
         """
@@ -49,17 +51,26 @@ class CrowdSimulation:
         self.n_individuals = n_individuals
         self.desired_velocity = desired_velocity
         self.noise_strength = noise_strength
+        self.panic_parameter = panic_parameter
+        self.doors = doors
+        self.known_exit= known_exit
 
         # --- AGENT INITIALIZATION ---
         self.pos = np.random.rand(self.n_individuals, 2)
-        # Spawn agents on the left side of the room to force them to cross it
-        self.pos[:, 0] = self.pos[:, 0] * (self.room_size[0] - 3) + 0.5 
+        # Spawn agents on the left side of the room to force them to cross it if there is one door
+        if self.doors == 1:
+            self.pos[:, 0] = self.pos[:, 0] * (self.room_size[0] - 3) + 0.5 
+        elif self.doors ==  2:
+            self.pos[:, 0] = self.pos[:, 0] * (self.room_size[0] - 1) + 0.5
         self.pos[:, 1] = self.pos[:, 1] * (self.room_size[1] - 1) + 0.5 
         
         # Random radii (Normal distribution around RADIUS)
         self.radius = np.random.normal(RADIUS, STD_RADIUS, size=self.n_individuals)        
         self.vel = np.zeros((self.n_individuals, 2))
         self.forces_magnitude = np.zeros(self.n_individuals)
+
+        # Random direction
+        self.random_direction = np.zeros((self.n_individuals, 2))
         
         # State tracking
         self.time = 0.0
@@ -67,6 +78,8 @@ class CrowdSimulation:
         self.exited_mask = np.zeros(self.n_individuals, dtype=bool)
         self.noise = np.zeros((self.n_individuals, 1))
         self.total_noise = np.zeros((self.n_individuals, 1))
+        self.exited_mask_r = np.zeros(self.n_individuals, dtype=bool)
+        self.exited_mask_l = np.zeros(self.n_individuals, dtype=bool)
 
     def get_forces(self):
         """
@@ -75,15 +88,58 @@ class CrowdSimulation:
         total_force = np.zeros((self.n_individuals, 2))
 
         # 1. DESIRED FORCE (Goal Direction)
-        target = np.array([self.room_size[0], self.room_size[1]/2])      
-        direction = target - self.pos
-        escaped_mask = self.pos[:, 0] > self.room_size[0]
+        # target = np.array([self.room_size[0], self.room_size[1]/2])      
+        # direction = target - self.pos
+        # escaped_mask = self.pos[:, 0] > self.room_size[0]
 
-        dist_to_target = np.linalg.norm(direction, axis=1, keepdims=True)
+        target_right = np.array([self.room_size[0], self.room_size[1]/2])
+        target_left = np.array([0, self.room_size[1]/2])
+        direction_r = target_right - self.pos
+        direction_l = target_left - self.pos
+        escaped_mask_r = self.pos[:, 0] > self.room_size[0]
+        escaped_mask_l = self.pos[:, 0] < 0
+
+        dist_to_target_r = np.linalg.norm(direction_r, axis=1, keepdims=True)
+        if self.doors == 1:
+            dist_to_target_l = np.full_like(dist_to_target_r, np.inf)
+        elif self.doors == 2:
+            dist_to_target_l = np.linalg.norm(direction_l, axis=1, keepdims=True)
+
+        dir_dis_r = np.append(direction_r, dist_to_target_r, axis=1)
+        dir_dis_l = np.append(direction_l, dist_to_target_l, axis=1)
+
+        stacked = np.stack((dir_dis_r, dir_dis_l))
+        # Find which array has the smaller 3rd column value (distance to exits) for each row
+        idx = np.argmin(stacked[:, :, 2], axis=0)
+        nearest_exit = stacked[idx, np.arange(stacked.shape[1])]
+
+        direction = nearest_exit[:,[0,1]]
+        dist_to_target = nearest_exit[:,2].reshape(-1, 1)
+
         e_desired = direction / (dist_to_target + 1e-6)
         
-        # If agent has escaped, keep running to the right (to clear the buffer)
-        e_desired[escaped_mask] = np.array([1.0, 0.0])
+        # Panic induced herding behavior
+        if self.known_exit == False:
+            exit_mask = nearest_exit[:,2] > 2
+
+            if self.time % (self.dt*50)<= self.dt + 1e-6:
+                self.random_direction = 2 * np.random.rand(self.n_individuals, 2) - 1
+
+            direction[exit_mask] = self.random_direction[exit_mask]
+
+            avg_dir_neighbors = np.zeros((self.n_individuals, 2))
+            for i in range(self.n_individuals):
+                dis_neigbors = np.linalg.norm(self.pos - self.pos[i], axis=1)
+                neighbor_mask = dis_neigbors <= PANIC_RADIUS
+                avg_dir_neighbors[i] = direction[neighbor_mask].mean(axis=0)
+            
+            panicked_direction = (1 - self.panic_parameter)*direction + self.panic_parameter*avg_dir_neighbors
+            norm_p = np.linalg.norm(panicked_direction, axis=1, keepdims=True)
+            e_desired[exit_mask] = (panicked_direction / norm_p)[exit_mask] # versor
+
+        # If agent has escaped, keep running to the right (or left) (to clear the buffer)
+        e_desired[escaped_mask_r] = np.array([1.0, 0.0])
+        e_desired[escaped_mask_l] = np.array([-1.0, 0.0])
         
         f_desired = MASS * (self.desired_velocity * e_desired - self.vel) / TAU
         total_force += f_desired 
@@ -163,8 +219,10 @@ class CrowdSimulation:
         dist_from_door_center = np.abs(y - H/2)
         in_door_gap = dist_from_door_center < door_half_width
         
-        ignore_right_wall = escaped_mask | in_door_gap
+        ignore_right_wall = escaped_mask_r | in_door_gap
+        ignore_left_wall = escaped_mask_l | in_door_gap
         dists[ignore_right_wall, 3] = np.inf
+        dists[ignore_left_wall, 0] = np.inf
 
         overlap = -dists         
         mask_touch = overlap > 0
@@ -221,28 +279,47 @@ class CrowdSimulation:
         
         # --- BOUNDARY CONDITIONS ---
         # 1. Floor and Ceiling
-        new_pos[:, 1] = np.clip(new_pos[:, 1], self.radius, self.room_size[1] - self.radius)        
-        # 2. Left Wall
-        new_pos[:, 0] = np.maximum(new_pos[:, 0], self.radius)
+        new_pos[:, 1] = np.clip(new_pos[:, 1], self.radius, self.room_size[1] - self.radius)  
+
+        in_door = np.abs(new_pos[:, 1] - self.room_size[1]/2) < (EXIT_WIDTH/2 - self.radius/2)
+        # 2. Left Wall (with possible Door Gap)
+        crossing_wall_l = (new_pos[:, 0] < (0 + self.radius)) & (self.pos[:, 0] > 0)
+
+        # Block agents hitting the wall, let those in the door pass
+        if self.doors == 1:
+            blocked_indices_l = crossing_wall_l
+        elif self.doors == 2:
+            blocked_indices_l = crossing_wall_l & (~in_door)
+
+        new_pos[blocked_indices_l, 0] = 0 + self.radius[blocked_indices_l]
+        self.vel[blocked_indices_l, 0] = 0
         
         # 3. Right Wall (Hard Obstacle with Door Gap)
-        crossing_wall = (new_pos[:, 0] > (self.room_size[0] - self.radius)) & (self.pos[:, 0] < self.room_size[0])
-        in_door = np.abs(new_pos[:, 1] - self.room_size[1]/2) < (EXIT_WIDTH/2 - self.radius/2)
+        crossing_wall_r = (new_pos[:, 0] > (self.room_size[0] - self.radius)) & (self.pos[:, 0] < self.room_size[0])
         
         # Block agents hitting the wall, let those in the door pass
-        blocked_indices = crossing_wall & (~in_door)
-        
-        new_pos[blocked_indices, 0] = self.room_size[0] - self.radius[blocked_indices]
-        self.vel[blocked_indices, 0] = 0
+        blocked_indices_r = crossing_wall_r & (~in_door)
+
+        new_pos[blocked_indices_r, 0] = self.room_size[0] - self.radius[blocked_indices_r]
+        self.vel[blocked_indices_r, 0] = 0
+
         self.pos = new_pos 
 
         # --- EXIT LOGGING ---
-        escaped_now = self.pos[:, 0] > self.room_size[0]
+        escaped_now_r = self.pos[:, 0] > self.room_size[0]
+        escaped_now_l = self.pos[:, 0] < 0
+        escaped_now = np.logical_or(escaped_now_r, escaped_now_l)
+
         new_exits = escaped_now & (~self.exited_mask)
         exit_indices = np.where(new_exits)[0]
         for _ in exit_indices:
             self.exit_times.append(self.time)
+        
         self.exited_mask |= escaped_now
+        self.exited_mask_r |= escaped_now_r
+        self.exited_mask_l |= escaped_now_l
+
+        self.time += dt
 
     def animate(self):
         """
@@ -344,7 +421,7 @@ class CrowdSimulation:
         for step in range(MAX_STEPS):
             for _ in range(SUBSTEPS):
                 self.update(self.dt/SUBSTEPS)
-            self.time += self.dt
+            # self.time += self.dt
             # Check if everyone has escaped
             if np.min(self.pos[:, 0]) > self.room_size[0]:
                 return self.time
@@ -648,6 +725,7 @@ def EscapeTimeVSRadius():
 
 # ==========================================
 # 8. ESCAPE TIME VS RADIUS STD DEV
+# ==========================================
 def EscapeTimeVSRadiusStd():    
     radius_stds = np.arange(0.0,RADIUS,(RADIUS)/10.) 
     avg_times = []   
@@ -721,7 +799,80 @@ def EscapeTimeVSRadiusStd():
     # plt.legend()    
     # plt.show()
 
+# ==========================================
+# 9. PANIC INDUCED HERDING BEHAVIOR
+# ==========================================
+def PanicVarianceExperiment(panic_values, runs=10):
+    exit100_variances = []
+    exit100_variances_std = []
+    s30_variances = []
+    s30_variances_std = []
+    diff_door_variances = []
+    diff_door_variances_std = []
 
+    print("\n--- STARTING COMPLEXITY STUDY: PANIC INDUCED HERDING EFFECT ---")
+    print("Hypothesis: More panic leads to jamming and an increasing difference in door usage.")
+
+    for p in panic_values:
+        run_exit100 = []
+        run_s30 = []
+        run_diff_door = []
+
+        for _ in tqdm(range(runs)):
+            sim = CrowdSimulation(
+                room_size=DEFAULT_ROOM_SIZE,
+                n_individuals=150,
+                doors=2,
+                panic_parameter=p,
+                known_exit=False
+            )
+
+            sim.run()
+
+            exit_time_100 = sim.exit_times[:100]
+            if len(exit_time_100) == 100:
+                run_exit100.append(exit_time_100[-1])
+            
+            mask_30s = np.array(sim.exit_times) <= 30
+            run_s30.append(sum(mask_30s))
+
+            diff_door_usage = abs(sum(sim.exited_mask_r) - sum(sim.exited_mask_l))
+            run_diff_door.append(diff_door_usage)
+
+        exit100_variances.append(np.nanmean(run_exit100))
+        exit100_variances_std.append(np.nanstd(run_exit100))
+
+        s30_variances.append(np.nanmean(run_s30))
+        s30_variances_std.append(np.nanstd(run_s30))
+
+        diff_door_variances.append(np.nanmean(run_diff_door))
+        diff_door_variances_std.append(np.nanstd(run_diff_door))
+    
+    # --- PLOT 1: Evacuation Time For 100 People ---
+    plt.figure(figsize=(10,6))
+    plt.errorbar(panic_values, exit100_variances, yerr=exit100_variances_std, marker='o', capsize=4)
+    plt.xlabel("Panic parameter")
+    plt.ylabel("Leaving time for 100 people (s)")
+    plt.grid(alpha=0.3)
+    plt.show()
+
+    # --- PLOT 2: Amount Of People Escaped Within 30 Seconds ---
+    plt.figure(figsize=(10,6))
+    plt.errorbar(panic_values, s30_variances, yerr=s30_variances_std, marker='o', capsize=4)
+    plt.xlabel("Panic parameter")
+    plt.ylabel("People escaping within 30s")
+    plt.grid(alpha=0.3)
+    plt.show()
+
+    # --- PLOT 2: Difference In Door Usage ---
+    plt.figure(figsize=(10,6))
+    plt.errorbar(panic_values, diff_door_variances, yerr=diff_door_variances_std, marker='o', capsize=4)
+    plt.xlabel("Panic parameter")
+    plt.ylabel("Differance in door usage")
+    plt.grid(alpha=0.3)
+    plt.show()
+
+    return None
 
 # ==========================================
 # --- MAIN MENU ---
@@ -739,6 +890,7 @@ if __name__ == "__main__":
         print("6. Friction Experiment")
         print("7. Radius Effect")
         print("8. Radius Std Dev Effect")
+        print("9. Panic And Herding Effect")
         print("0. Exit")
         
         
@@ -767,6 +919,9 @@ if __name__ == "__main__":
             EscapeTimeVSRadius()
         elif choice == "8":
             EscapeTimeVSRadiusStd()
+        elif choice == "9":
+            panic_vals = [0.0, 0.1, 0.25, 0.5, 0.75, 0.9 ,1]
+            PanicVarianceExperiment(panic_vals, runs=5)
         elif choice == "0":
             break
         else:

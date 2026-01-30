@@ -13,7 +13,7 @@ from tqdm import tqdm
 # Default Simulation Environment
 DEFAULT_ROOM_SIZE = (12.0, 12.0)
 EXIT_WIDTH = 1.0          
-N_INDIVIDUALS = 100
+N_INDIVIDUALS = 150
 RADIUS = 0.25
 STD_RADIUS = 0.03
 MASS = 80.0
@@ -24,8 +24,8 @@ TAU = 0.5             # Relaxation Time
 PANIC_RADIUS = DEFAULT_ROOM_SIZE[0] / 3
 
 # HELBING FORCE PARAMETERS
-A = 2000.0            # Social Force Strength (Newton) --> in the paper was 2000
-B = 0.08              # Social Force Falloff (meters)
+A = 2000.0             # Social Force Strength (Newton) --> in the paper was 2000
+B = 0.08               # Social Force Falloff (meters)
 K1 = 120000.0          # Body Compression Force (Newton/m)
 K2 = 240000.0          # Friction Force (Newton/m)
 noise_constant = 4.0   # Scaling factor for noise effect
@@ -34,7 +34,7 @@ noise_constant = 4.0   # Scaling factor for noise effect
 # TIMESTEP / TIMEOUT / ANTI-JAMMING PARAMETERS
 DT=0.02              # Time Step (seconds)
 SUBSTEPS = 15        # Physics Substeps per frame for stability
-MAX_STEPS = 5000  # If simulation exceeds this, it is considered jammed
+MAX_STEPS = 5000     # If simulation exceeds this, it is considered jammed
 PENALTY_TIME = MAX_STEPS*DT # approx 1800 seconds
 
 
@@ -65,7 +65,7 @@ class CrowdSimulation:
         self.pos[:, 1] = self.pos[:, 1] * (self.room_size[1] - 1) + 0.5 
         
         # Random radii (Normal distribution around RADIUS)
-        self.radius = np.random.normal(RADIUS, STD_RADIUS, size=self.n_individuals)        
+        self.radius = np.random.normal(radius, std_radius, size=self.n_individuals)        
         self.vel = np.zeros((self.n_individuals, 2))
         self.forces_magnitude = np.zeros(self.n_individuals)
 
@@ -88,10 +88,6 @@ class CrowdSimulation:
         total_force = np.zeros((self.n_individuals, 2))
 
         # 1. DESIRED FORCE (Goal Direction)
-        # target = np.array([self.room_size[0], self.room_size[1]/2])      
-        # direction = target - self.pos
-        # escaped_mask = self.pos[:, 0] > self.room_size[0]
-
         target_right = np.array([self.room_size[0], self.room_size[1]/2])
         target_left = np.array([0, self.room_size[1]/2])
         direction_r = target_right - self.pos
@@ -255,24 +251,11 @@ class CrowdSimulation:
         forces = self.get_forces()
         acc = forces / MASS
         self.vel += acc * dt * (1 - self.noise_strength) + self.noise_strength * noise_constant * self.noise
-        #print(self.vel)
-        
-        # --- NOISE (Random Walk) ---
-        #if self.noise_strength > 0:
-           #noise = self.noise_strength * np.sqrt(dt) * np.random.randn(self.n_individuals, 2)
-
-            #self.vel = self.vel * (1 - self.noise_strength) + self.noise * self.noise_strength * noise_constant
 
         # --- SPEED LIMITING ---
         speed = np.linalg.norm(self.vel, axis=1)
         speed_safe = np.where(speed < 1e-6, 1e-6, speed)        
         self.vel = np.where(speed[:, None] > MAX_SPEED, self.vel / speed_safe[:, None] * MAX_SPEED, self.vel)
-        
-        # # --- OPTIONAL: PHYSICAL BLOCKING (Real Jamming) ---
-        # # Uncomment below to simulate agents getting stuck due to high pressure
-        # CRITICAL_PRESSURE = 4000.0
-        # stuck_mask = self.forces_magnitude > CRITICAL_PRESSURE
-        # self.vel[stuck_mask] = 0.0
 
         # Update Position
         new_pos = self.pos + self.vel * dt
@@ -329,7 +312,7 @@ class CrowdSimulation:
         self.fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
 
         # --- PLOT 1: ROOM ---
-        ax1.set_xlim(0, self.room_size[0] + 4)
+        ax1.set_xlim(-4, self.room_size[0] + 4)
         ax1.set_ylim(0, self.room_size[1])
         ax1.set_aspect('equal') # CRITICAL: Ensures circles look like circles, not ovals
         ax1.set_title(f"Crowd Evacuation (N={self.n_individuals}, V0={self.desired_velocity})")
@@ -337,9 +320,16 @@ class CrowdSimulation:
         # Draw Walls
         # Door gap (Green)
         ax1.plot([self.room_size[0], self.room_size[0]], [(self.room_size[1] - EXIT_WIDTH) / 2, (self.room_size[1] + EXIT_WIDTH) / 2], color='green', linewidth=5)
+        if self.doors == 2:
+            ax1.plot([0, 0], [(self.room_size[1] - EXIT_WIDTH) / 2, (self.room_size[1] + EXIT_WIDTH) / 2], color='green', linewidth=5)
         # Black walls
         ax1.plot([0, self.room_size[0]], [0, 0], 'k'); ax1.plot([0, self.room_size[0]], [self.room_size[1], self.room_size[1]], 'k')
-        ax1.plot([0, 0], [0, self.room_size[1]], 'k'); ax1.plot([self.room_size[0], self.room_size[0]], [0, (self.room_size[1] - EXIT_WIDTH) / 2], 'k')
+        if self.doors == 1:
+            ax1.plot([0, 0], [0, self.room_size[1]], 'k')
+        elif self.doors == 2:
+            ax1.plot([0, 0], [0, (self.room_size[1] - EXIT_WIDTH) / 2], 'k')
+            ax1.plot([0, 0], [(self.room_size[1] + EXIT_WIDTH) / 2, self.room_size[1]], 'k')
+        ax1.plot([self.room_size[0], self.room_size[0]], [0, (self.room_size[1] - EXIT_WIDTH) / 2], 'k')
         ax1.plot([self.room_size[0], self.room_size[0]], [(self.room_size[1] + EXIT_WIDTH) / 2, self.room_size[1]], 'k')  
 
         # --- AGENT RENDERING (EllipseCollection) ---
@@ -365,19 +355,6 @@ class CrowdSimulation:
         self.collection.set_array(self.forces_magnitude)
         ax1.add_collection(self.collection)
 
-        # # Colorbar
-        # self.sm = cm.ScalarMappable(cmap=self.cmap, norm=self.norm)
-        # self.sm.set_array([])
-        # self.cbar = self.fig.colorbar(self.sm, ax=ax1, orientation='horizontal', fraction=0.04, pad=0.1, shrink=0.7)
-        # self.cbar.set_label('Pressure Force (Newton)', labelpad=5)
-
-        # # --- PLOT 2: HISTOGRAM ---
-        # ax2.set_xlim(50, 6000)
-        # ax2.set_ylim(0, 40)
-        # ax2.set_title("Danger Zone: People under Pressure (>50N)")
-        # self.bins = np.linspace(50, 5000, 8)
-        # self.bars = ax2.bar(self.bins[:-1], np.zeros(len(self.bins)-1), width=np.diff(self.bins), align='edge', color='red', alpha=0.7, edgecolor='black')
-
         def animate_frame(frame):
             # Update physics twice per frame for stability
             for _ in range(SUBSTEPS): 
@@ -388,10 +365,6 @@ class CrowdSimulation:
             # Update visuals
             self.collection.set_offsets(self.pos)
             self.collection.set_array(self.forces_magnitude)
-            
-            # # Update Histogram
-            # counts, _ = np.histogram(self.forces_magnitude, bins=self.bins)
-            # for bar, count in zip(self.bars, counts): bar.set_height(count)
             
             return self.collection #, list(self.bars)
         
@@ -421,7 +394,6 @@ class CrowdSimulation:
         for step in range(MAX_STEPS):
             for _ in range(SUBSTEPS):
                 self.update(self.dt/SUBSTEPS)
-            # self.time += self.dt
             # Check if everyone has escaped
             if np.min(self.pos[:, 0]) > self.room_size[0]:
                 return self.time
@@ -469,25 +441,22 @@ def EscapeTimeVSVelocity():
         jammed_runs = 0
 
         for _ in range(runs):
-            sim = CrowdSimulation(desired_velocity=v, n_individuals=N_INDIVIDUALS)
+            sim = CrowdSimulation(radius=0.25, desired_velocity=v, n_individuals=N_INDIVIDUALS)
             val = sim.run()
             
             if val is not None: #Successful Evacuation
                 run_times.append(val)
             else: #Jamming
                 print(f"[!] Jamming detected at V0={v:.2f} ({_+1}/{runs})")
-                jammed_runs += 1
-                # run_times.append(PENALTY_TIME)
-        
+                jammed_runs += 1       
         jammed_times.append(jammed_runs)
+
         if len(run_times) > 0:
             avg_times.append(np.mean(run_times))
             std_times.append(np.std(run_times))
             mask_ended.append(True)
         else:
             mask_ended.append(False)
-            # avg_times.append(PENALTY_TIME)
-            # std_times.append(0.0)
     
     mask_ended = np.array(mask_ended, dtype=bool)
     
@@ -569,15 +538,9 @@ def NoiseEffectExperiment(noise_values, vel, runs=5):
     plt.xlabel("Noise Strength (Randomness)")
     plt.ylabel("Success Rate")
     plt.show()
-        
-# ==========================================
-# --- 5. ASPECT RATIO (Complexity Study) ---
-# ==========================================
-# def AspectRatio(ratio_list, runs=5):
-
 
 # ==========================================
-# --- 6. FRICTION FORCE (Complexity Study) ---
+# --- 5. FRICTION FORCE (Complexity Study) ---
 # No friction: People slide past each other freely, smooth fluid-like flow
 # Medium friction: Partial locking and intermittens clogging mixed with avalanches of exits
 # High friction: Stable force chains and locks causing clogging
@@ -644,7 +607,8 @@ def FrictionExperiment(K2_values, runs):
 
 
 # ==========================================
-# --- 7. RADIUS EFFECT ---  
+# --- 6. RADIUS EFFECT ---  
+# ==========================================
 def EscapeTimeVSRadius():
     radii = np.arange(0.2, 0.5, (0.5-0.2)/10.)
     avg_times = []
@@ -713,18 +677,8 @@ def EscapeTimeVSRadius():
     plt.tight_layout()
     plt.show()  
     
-    # plt.figure(figsize=(10,6))    
-    # plt.errorbar(radii, avg_times, yerr=std_times, fmt='-o', color='blue', capsize=5, label='Evacuation Time')
-    # plt.plot(radii, jammed_times, 'o', color='red', label='Jammed Runs', markersize=8)
-    # # plt.axhline(y=PENALTY_TIME, color='red', linestyle='--', label='Jamming Threshold (Timeout)') # Jamming Threshold Line
-    # plt.title("Complexity: Varying Individual Size Effect")
-    # plt.xlabel("Individual Radius (m)")    
-    # plt.ylabel("Evacuation Time (s)")
-    # plt.legend()
-    # plt.show()
-
 # ==========================================
-# 8. ESCAPE TIME VS RADIUS STD DEV
+# 7. ESCAPE TIME VS RADIUS STD DEV
 # ==========================================
 def EscapeTimeVSRadiusStd():    
     radius_stds = np.arange(0.0,RADIUS,(RADIUS)/10.) 
@@ -787,26 +741,15 @@ def EscapeTimeVSRadiusStd():
     plt.suptitle("Complexity: Varying Radius Standard Deviation Effect", fontsize=16)
     plt.tight_layout()
     plt.show() 
-    
-    
-    # plt.figure(figsize=(10,6))
-    # plt.errorbar(radius_stds, avg_times, yerr=std_times, fmt='-o', color='blue', capsize=5, label='Evacuation Time')
-    # # plt.axhline(y=PENALTY_TIME, color='red', linestyle='--', label='Jamming Threshold (Timeout)') # Jamming Threshold Line
-    # plt.plot(radius_stds, jammed_times, 'o', color='red', label='Jammed Runs', markersize=8)
-    # plt.title("Complexity: Different Size Effect")
-    # plt.xlabel("Individual Radius Standard Deviation (m)")
-    # plt.ylabel("Evacuation Time (s)")
-    # plt.legend()    
-    # plt.show()
 
 # ==========================================
-# 9. PANIC INDUCED HERDING BEHAVIOR
+# 8. PANIC INDUCED HERDING BEHAVIOR
 # ==========================================
 def PanicVarianceExperiment(panic_values, runs=10):
     exit100_variances = []
     exit100_variances_std = []
-    s30_variances = []
-    s30_variances_std = []
+    s10_variances = []
+    s10_variances_std = []
     diff_door_variances = []
     diff_door_variances_std = []
 
@@ -815,7 +758,7 @@ def PanicVarianceExperiment(panic_values, runs=10):
 
     for p in panic_values:
         run_exit100 = []
-        run_s30 = []
+        run_s10 = []
         run_diff_door = []
 
         for _ in tqdm(range(runs)):
@@ -833,8 +776,8 @@ def PanicVarianceExperiment(panic_values, runs=10):
             if len(exit_time_100) == 100:
                 run_exit100.append(exit_time_100[-1])
             
-            mask_30s = np.array(sim.exit_times) <= 30
-            run_s30.append(sum(mask_30s))
+            mask_10s = np.array(sim.exit_times) <= 10
+            run_s10.append(sum(mask_10s))
 
             diff_door_usage = abs(sum(sim.exited_mask_r) - sum(sim.exited_mask_l))
             run_diff_door.append(diff_door_usage)
@@ -842,8 +785,8 @@ def PanicVarianceExperiment(panic_values, runs=10):
         exit100_variances.append(np.nanmean(run_exit100))
         exit100_variances_std.append(np.nanstd(run_exit100))
 
-        s30_variances.append(np.nanmean(run_s30))
-        s30_variances_std.append(np.nanstd(run_s30))
+        s10_variances.append(np.nanmean(run_s10))
+        s10_variances_std.append(np.nanstd(run_s10))
 
         diff_door_variances.append(np.nanmean(run_diff_door))
         diff_door_variances_std.append(np.nanstd(run_diff_door))
@@ -856,11 +799,11 @@ def PanicVarianceExperiment(panic_values, runs=10):
     plt.grid(alpha=0.3)
     plt.show()
 
-    # --- PLOT 2: Amount Of People Escaped Within 30 Seconds ---
+    # --- PLOT 2: Amount Of People Escaped Within 10 Seconds ---
     plt.figure(figsize=(10,6))
-    plt.errorbar(panic_values, s30_variances, yerr=s30_variances_std, marker='o', capsize=4)
+    plt.errorbar(panic_values, s10_variances, yerr=s10_variances_std, marker='o', capsize=4)
     plt.xlabel("Panic parameter")
-    plt.ylabel("People escaping within 30s")
+    plt.ylabel("People escaping within 10s")
     plt.grid(alpha=0.3)
     plt.show()
 
@@ -886,18 +829,17 @@ if __name__ == "__main__":
         print("2. Run Animation with NOISE")
         print("3. Velocity Effect")
         print("4. Noise Effect")
-        print("5. Aspect Ratio Effect")
-        print("6. Friction Experiment")
-        print("7. Radius Effect")
-        print("8. Radius Std Dev Effect")
-        print("9. Panic And Herding Effect")
+        print("5. Friction Experiment")
+        print("6. Radius Effect")
+        print("7. Radius Std Dev Effect")
+        print("8. Panic And Herding Effect")
         print("0. Exit")
         
         
         choice = input("\nEnter selection: ")
         
         if choice == "1":
-            sim = CrowdSimulation(desired_velocity=10.5)
+            sim = CrowdSimulation(desired_velocity=6.0, doors=2, known_exit=2, panic_parameter=0.8)
             sim.animate()
         elif choice == "2":
             sim = CrowdSimulation(desired_velocity=5, noise_strength=0)
@@ -909,17 +851,13 @@ if __name__ == "__main__":
             noise_vals = [0.1, 0.3, 0.5, 0.7, 0.9]
             NoiseEffectExperiment(noise_vals, vel=9.0, runs=5)
         elif choice == "5":
-            # Test various room shapes
-            # AspectRatio([0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0])
-            print("Aspect Ratio study not implemented yet.")
-        elif choice == "6":
             # Friction Effect
             FrictionExperiment(K2_values,runs=5)
-        elif choice == "7":
+        elif choice == "6":
             EscapeTimeVSRadius()
-        elif choice == "8":
+        elif choice == "7":
             EscapeTimeVSRadiusStd()
-        elif choice == "9":
+        elif choice == "8":
             panic_vals = [0.0, 0.1, 0.25, 0.5, 0.75, 0.9 ,1]
             PanicVarianceExperiment(panic_vals, runs=5)
         elif choice == "0":

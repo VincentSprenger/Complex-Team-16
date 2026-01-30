@@ -18,3 +18,6 @@ If you want to test the code with different parameters they can be changed in th
 - doors
 - known exits
 
+
+
+The slides can be also found in the git under Slides_ Complexity and Emergence in Granular Crowd Dynamics.pdf

@@ -309,10 +309,13 @@ class CrowdSimulation:
         Visualize the simulation using Matplotlib.
         Uses EllipseCollection for physically accurate circles.
         """
-        self.fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+        self.fig, (ax1) = plt.subplots(1, 1, figsize=(16, 7))
 
         # --- PLOT 1: ROOM ---
-        ax1.set_xlim(-4, self.room_size[0] + 4)
+        if self.doors == 1:
+            ax1.set_xlim(0, self.room_size[0] + 4)
+        elif self.doors == 2:
+            ax1.set_xlim(-4, self.room_size[0] + 4)
         ax1.set_ylim(0, self.room_size[1])
         ax1.set_aspect('equal') # CRITICAL: Ensures circles look like circles, not ovals
         ax1.set_title(f"Crowd Evacuation (N={self.n_individuals}, V0={self.desired_velocity})")
@@ -634,7 +637,6 @@ def EscapeTimeVSRadius():
             else:
                 print(f"[!] Jamming detected at Radius={r:.2f} ({_+1}/{runs})")
                 jammed_runs += 1
-                # run_times.append(PENALTY_TIME)
                 
         jammed_times.append(jammed_runs)
         if len(run_times) > 0:
@@ -643,8 +645,6 @@ def EscapeTimeVSRadius():
             mask_ended.append(True)
         else:
             mask_ended.append(False)
-            # avg_times.append(PENALTY_TIME)
-            # std_times.append(0.0)
     
     mask_ended = np.array(mask_ended, dtype=bool)
 
@@ -839,7 +839,7 @@ if __name__ == "__main__":
         choice = input("\nEnter selection: ")
         
         if choice == "1":
-            sim = CrowdSimulation(desired_velocity=6.0, doors=2, known_exit=2, panic_parameter=0.8)
+            sim = CrowdSimulation(desired_velocity=6.0)
             sim.animate()
         elif choice == "2":
             sim = CrowdSimulation(desired_velocity=5, noise_strength=0)

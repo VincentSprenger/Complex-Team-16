@@ -12,7 +12,7 @@ GranularDyamics.py contains an animation testing the Brazil Nut effect and segre
 
 baseline social force model.ipynb contains a very early implementation of the social force model.
 
-The presentation slides can also be found in the git under Slides_ Complexity and Emergence in Granular Crowd Dynamics.pdf
+The presentation slides and the GenAI usage statement can be found in the git "Presentation and GenAI statement" subfolder.
 
 If you want to test the code with different parameters they can be changed in the initialization of the simulation; 
 
